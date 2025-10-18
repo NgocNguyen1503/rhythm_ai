@@ -1,0 +1,20 @@
+# --- Core web & API ---
+Flask==3.0.3
+flask-cors==4.0.1
+
+# --- Audio processing ---
+librosa==0.10.1
+numpy==1.26.4
+soundfile==0.12.1
+audioread==3.0.1
+scipy==1.13.1
+
+# --- Visualization ---
+matplotlib==3.9.2
+
+# --- YouTube downloader ---
+yt-dlp==2025.1.1
+
+# --- Optional utilities (recommended for stability) ---
+tqdm==4.66.4
+requests==2.32.3
