@@ -13,18 +13,20 @@ LARAVEL_SONGS_PATH = "/Applications/XAMPP/xamppfiles/htdocs/rhythm_game_server/p
 
 # ========== CLEANING FILE NAME ==========
 def sanitize_filename(filename):
-    return re.sub(r'[\\/*?:"<>|]', "_", filename).strip()
+    # Add "_" instead of space
+    filename = re.sub(r'[\\/*?:"<>|]', "_", filename)
+    filename = filename.replace(" ", "_")
+    return filename.strip()
+
 
 # ========== ANALYSING BEAT NATURALLY ==========
 def extract_beats(audio_path, energy_threshold=0.03):
     print("🎵 Đang phân tích nhạc:", audio_path)
     y, sr = librosa.load(audio_path, sr=None)
 
-    # onset detection (backtrack = True to align better onset)
     onset_frames = librosa.onset.onset_detect(y=y, sr=sr, backtrack=True)
     onset_times = librosa.frames_to_time(onset_frames, sr=sr)
 
-    # Using RMS energy to remove silent part
     rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)[0]
     rms_times = librosa.frames_to_time(np.arange(len(rms)), sr=sr)
 
@@ -49,20 +51,14 @@ def extract_beats(audio_path, energy_threshold=0.03):
 
 
 # ========== GENERATING BEATMAP ==========
-def generate_beatmap_json(beat_times, beat_strength, rms, rms_times, song_title, difficulty):
-    """
-    return: (output_path, beatmap_data)
-    - filename: {song_title}_{difficulty}.json
-    - save to: {LARAVEL_SONGS_PATH}/{song_title}/beatmaps/
-    """
-    song_dir = os.path.join(LARAVEL_SONGS_PATH, song_title)
+def generate_beatmap_json(beat_times, beat_strength, rms, rms_times, safe_title, difficulty):
+    song_dir = os.path.join(LARAVEL_SONGS_PATH, safe_title)
     beatmap_dir = os.path.join(song_dir, "beatmaps")
     os.makedirs(beatmap_dir, exist_ok=True)
-    output_path = os.path.join(beatmap_dir, f"{song_title}_{difficulty}.json")
+    output_path = os.path.join(beatmap_dir, f"{safe_title}_{difficulty}.json")
 
     beatmap_data = {"difficulty": difficulty, "beats": []}
 
-    # Difficulty → sample density & probabilities
     if difficulty == "easy":
         step, double_p, triple_p = 3, 0.05, 0.00
     elif difficulty == "normal":
@@ -70,7 +66,6 @@ def generate_beatmap_json(beat_times, beat_strength, rms, rms_times, song_title,
     else:
         step, double_p, triple_p = 1, 0.25, 0.10
 
-    # sample
     sample_times = beat_times[::step]
     sample_strength = beat_strength[::step] if len(beat_strength) > 0 else np.zeros_like(sample_times)
 
@@ -80,10 +75,6 @@ def generate_beatmap_json(beat_times, beat_strength, rms, rms_times, song_title,
             json.dump(beatmap_data, f, ensure_ascii=False, indent=4)
         return output_path, beatmap_data
 
-    intervals = np.diff(sample_times)
-    median_interval = float(np.median(intervals)) if len(intervals) > 0 else 0.5
-
-    # thresholds / params
     min_gap = 0.06
     min_hold = 0.35
     energy_hold_ratio = 0.6
@@ -137,7 +128,6 @@ def generate_beatmap_json(beat_times, beat_strength, rms, rms_times, song_title,
 
             beatmap_data["beats"].append(note)
 
-    # Sort
     beatmap_data["beats"].sort(key=lambda n: (n["time"], n["lane"]))
 
     with open(output_path, "w", encoding="utf-8") as f:
@@ -148,13 +138,13 @@ def generate_beatmap_json(beat_times, beat_strength, rms, rms_times, song_title,
 
 
 # ========== GENERATING PREVIEW ==========
-def save_preview(song_title, difficulty, beatmap_data):
-    song_dir = os.path.join(LARAVEL_SONGS_PATH, song_title)
+def save_preview(safe_title, difficulty, beatmap_data):
+    song_dir = os.path.join(LARAVEL_SONGS_PATH, safe_title)
     os.makedirs(song_dir, exist_ok=True)
-    output_path = os.path.join(song_dir, f"{song_title}_{difficulty}_preview.png")
+    output_path = os.path.join(song_dir, f"{safe_title}_{difficulty}_preview.png")
 
     plt.figure(figsize=(8, 6))
-    plt.title(f"Preview Beatmap - {song_title} ({difficulty})")
+    plt.title(f"Preview Beatmap - {safe_title} ({difficulty})")
 
     color = {"easy": "limegreen", "normal": "orange", "hard": "crimson"}[difficulty]
 
@@ -182,18 +172,18 @@ def save_preview(song_title, difficulty, beatmap_data):
     return output_path
 
 
-# ========== GENERATING WAVEFORM  ==========
-def save_waveform_plot(y, sr, beat_times, tempo, song_title):
-    song_dir = os.path.join(LARAVEL_SONGS_PATH, song_title)
+# ========== GENERATING WAVEFORM ==========
+def save_waveform_plot(y, sr, beat_times, tempo, safe_title):
+    song_dir = os.path.join(LARAVEL_SONGS_PATH, safe_title)
     os.makedirs(song_dir, exist_ok=True)
-    out_path = os.path.join(song_dir, f"{song_title}_waveform.png")
+    out_path = os.path.join(song_dir, f"{safe_title}_waveform.png")
 
     plt.figure(figsize=(12, 4))
     times = np.arange(len(y)) / sr
     plt.plot(times, y, color='gray', alpha=0.5)
     if len(beat_times) > 0:
         plt.vlines(beat_times, ymin=-1, ymax=1, color='dodgerblue', alpha=0.6, linewidth=1.2)
-    plt.title(f"{song_title} — Waveform + Onsets ({tempo:.1f} BPM)")
+    plt.title(f"{safe_title} — Waveform + Onsets ({tempo:.1f} BPM)")
     plt.xlabel("Thời gian (s)")
     plt.ylabel("Biên độ")
     plt.tight_layout()
@@ -203,33 +193,37 @@ def save_waveform_plot(y, sr, beat_times, tempo, song_title):
     return out_path
 
 
+# ========== MAIN GENERATOR ==========
 def generate_from_input(audio_path, song_title=None):
-    """
-    audio_path: path to mp3 file downloaded (LARAVEL_SONGS_PATH/{song_title}/{song_title}.mp3)
-    song_title: nếu Flask truyền name, dùng luôn; else lấy từ basename mp3
-    """
-    print("- AI Auto Beatmap Generator v6 (Natural Hold Detection) -")
+    print("- AI Auto Beatmap Generator v6 (Clean Path Version) -")
 
-    song_title = sanitize_filename(song_title or os.path.splitext(os.path.basename(audio_path))[0])
-    song_dir = os.path.join(LARAVEL_SONGS_PATH, song_title)
+    song_title = song_title or os.path.splitext(os.path.basename(audio_path))[0]
+    safe_title = sanitize_filename(song_title)
+
+    song_dir = os.path.join(LARAVEL_SONGS_PATH, safe_title)
     os.makedirs(song_dir, exist_ok=True)
+
+    mp3_target = os.path.join(song_dir, f"{safe_title}.mp3")
+    if os.path.exists(audio_path) and audio_path != mp3_target:
+        os.rename(audio_path, mp3_target)
+        audio_path = mp3_target
 
     beat_times, beat_strength, tempo, y, sr, rms, rms_times = extract_beats(audio_path)
 
     beatmaps = {}
     for diff in ["easy", "normal", "hard"]:
-        path, data = generate_beatmap_json(beat_times, beat_strength, rms, rms_times, song_title, diff)
+        path, data = generate_beatmap_json(beat_times, beat_strength, rms, rms_times, safe_title, diff)
         beatmaps[diff] = data
-        save_preview(song_title, diff, data)
+        save_preview(safe_title, diff, data)
 
-    save_waveform_plot(y, sr, beat_times, tempo, song_title)
+    save_waveform_plot(y, sr, beat_times, tempo, safe_title)
 
     result = {
         "status": "success",
         "title": song_title,
         "tempo": float(tempo),
-        "audio_path": f"/songs/{song_title}/{song_title}.mp3",
-        "waveform_path": f"/songs/{song_title}/{song_title}_waveform.png",
+        "audio_path": f"/songs/{safe_title}/{safe_title}.mp3",
+        "waveform_path": f"/songs/{safe_title}/{safe_title}_waveform.png",
         "beatmaps": beatmaps
     }
 

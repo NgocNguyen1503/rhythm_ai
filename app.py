@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
 import os
 import yt_dlp
-from beatmap_generator import generate_from_input
+from beatmap_generator import generate_from_input, sanitize_filename, LARAVEL_SONGS_PATH
 
 app = Flask(__name__)
 
@@ -18,14 +18,12 @@ def generate():
                 "message": "Thiếu tham số 'name' hoặc 'audio'!"
             }), 400
 
-        # Create folder path in Laravel server
-        # Create folder for yt-dlp to save directly
-        from beatmap_generator import LARAVEL_SONGS_PATH
-        output_dir = os.path.join(LARAVEL_SONGS_PATH, name)
+        safe_title = sanitize_filename(name)
+
+        output_dir = os.path.join(LARAVEL_SONGS_PATH, safe_title)
         os.makedirs(output_dir, exist_ok=True)
 
-        # base path
-        output_audio_base = os.path.join(output_dir, name)
+        output_audio_base = os.path.join(output_dir, safe_title)
         outtmpl = output_audio_base + ".%(ext)s"
 
         ydl_opts = {
@@ -39,25 +37,25 @@ def generate():
             }],
         }
 
-        print(f"Đang tải {audio_link} ...")
+        print(f"🎵 Đang tải {audio_link} ...")
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([audio_link])
 
-        output_audio = os.path.join(output_dir, f"{name}.mp3")
+        output_audio = os.path.join(output_dir, f"{safe_title}.mp3")
+
         if not os.path.exists(output_audio):
-            # fallback: pick first mp3 in dir
             downloaded_files = [f for f in os.listdir(output_dir) if f.lower().endswith(".mp3")]
             if downloaded_files:
                 output_audio = os.path.join(output_dir, downloaded_files[0])
             else:
                 raise FileNotFoundError("Không tìm thấy file mp3 sau khi tải!")
 
-        print(f"Đã lưu MP3 tại {output_audio}")
-        print("Bắt đầu sinh beatmap...")
+        print(f"✅ Đã lưu MP3 tại: {output_audio}")
+        print("🚀 Bắt đầu sinh beatmap...")
 
         result = generate_from_input(output_audio, song_title=name)
 
-        print("Hoàn tất sinh beatmap!")
+        print("🎯 Hoàn tất sinh beatmap!")
         return jsonify(result)
 
     except Exception as e:
